@@ -2,5 +2,8 @@
 name = "herdr-last-tab"
 version = "0.1.0"
 edition = "2024"
+description = "Herdr plugin for toggling recently used tabs and panes"
 
 [dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

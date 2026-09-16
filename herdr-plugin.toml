@@ -1,0 +1,23 @@
+id = "j-chmielewski.last-tab"
+name = "Last Tab"
+version = "0.1.0"
+min_herdr_version = "0.9.0"
+description = "Toggle the most recently used tab or pane."
+platforms = ["linux", "macos"]
+
+[[build]]
+command = ["cargo", "build", "--release"]
+
+[[actions]]
+id = "toggle-tab"
+title = "Toggle last tab"
+description = "Toggle the most recently used tab in the current workspace."
+contexts = ["workspace", "tab"]
+command = ["./target/release/herdr-last-tab", "tab"]
+
+[[actions]]
+id = "toggle-pane"
+title = "Toggle last pane"
+description = "Toggle the most recently used pane in the current tab."
+contexts = ["tab", "pane"]
+command = ["./target/release/herdr-last-tab", "pane"]

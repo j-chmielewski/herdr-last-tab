@@ -21,3 +21,11 @@ title = "Toggle last pane"
 description = "Toggle the most recently used pane in the current tab."
 contexts = ["tab", "pane"]
 command = ["./target/release/herdr-last-tab", "pane"]
+
+[[events]]
+on = "tab.focused"
+command = ["./target/release/herdr-last-tab", "event"]
+
+[[events]]
+on = "pane.focused"
+command = ["./target/release/herdr-last-tab", "event"]

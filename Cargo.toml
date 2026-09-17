@@ -5,5 +5,6 @@ edition = "2024"
 description = "Herdr plugin for toggling recently used tabs and panes"
 
 [dependencies]
+fs2 = "0.4"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

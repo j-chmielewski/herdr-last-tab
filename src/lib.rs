@@ -19,9 +19,24 @@ struct History {
 }
 
 impl HistoryStore {
-    /// Returns the most recently recorded live object other than `current`.
-    /// Closed objects are discarded before every toggle.
-    pub fn toggle_tab(
+    /// Records a tab focus observation in workspace-scoped MRU order.
+    pub fn observe_tab(&mut self, workspace_id: &str, tab_id: &str) {
+        self.tabs
+            .entry(workspace_id.to_owned())
+            .or_default()
+            .observe(tab_id);
+    }
+
+    /// Records a pane focus observation in tab-scoped MRU order.
+    pub fn observe_pane(&mut self, tab_id: &str, pane_id: &str) {
+        self.panes
+            .entry(tab_id.to_owned())
+            .or_default()
+            .observe(pane_id);
+    }
+
+    /// Returns the most recently observed live tab other than `current`.
+    pub fn previous_tab(
         &mut self,
         workspace_id: &str,
         current: &str,
@@ -30,11 +45,11 @@ impl HistoryStore {
         self.tabs
             .entry(workspace_id.to_owned())
             .or_default()
-            .toggle(current, live_tab_ids)
+            .previous(current, live_tab_ids)
     }
 
-    /// Pane histories are keyed by tab, so panes in another tab can never be selected.
-    pub fn toggle_pane(
+    /// Returns the most recently observed live pane in `tab_id` other than `current`.
+    pub fn previous_pane(
         &mut self,
         tab_id: &str,
         current: &str,
@@ -43,7 +58,7 @@ impl HistoryStore {
         self.panes
             .entry(tab_id.to_owned())
             .or_default()
-            .toggle(current, live_pane_ids)
+            .previous(current, live_pane_ids)
     }
 
     pub fn load(path: &Path) -> io::Result<Self> {
@@ -54,6 +69,7 @@ impl HistoryStore {
         }
     }
 
+    /// Atomically replaces the persisted state. Callers serialize updates with the state lock.
     pub fn save(&self, path: &Path) -> io::Result<()> {
         let parent = path.parent().ok_or_else(|| {
             io::Error::new(
@@ -70,20 +86,23 @@ impl HistoryStore {
 }
 
 impl History {
-    fn toggle(
+    fn observe(&mut self, id: &str) {
+        self.entries.retain(|entry| entry != id);
+        self.entries.push(id.to_owned());
+    }
+
+    fn previous(
         &mut self,
         current: &str,
         live_ids: impl IntoIterator<Item = String>,
     ) -> Option<String> {
         let live_ids: HashSet<_> = live_ids.into_iter().collect();
         self.entries.retain(|entry| live_ids.contains(entry));
-        self.entries.retain(|entry| entry != current);
-
-        let target = self.entries.last().cloned();
-        if live_ids.contains(current) {
-            self.entries.push(current.to_owned());
-        }
-        target
+        self.entries
+            .iter()
+            .rev()
+            .find(|entry| entry.as_str() != current)
+            .cloned()
     }
 }
 
@@ -96,60 +115,61 @@ mod tests {
     }
 
     #[test]
-    fn tab_history_toggles_between_two_recent_tabs() {
+    fn focus_history_toggles_panes_that_were_focused_between_actions() {
         let mut history = HistoryStore::default();
+        history.observe_pane("tab", "one");
+        history.observe_pane("tab", "two");
+        history.observe_pane("tab", "three");
+
         assert_eq!(
-            history.toggle_tab("workspace", "one", ids(&["one", "two"])),
-            None
-        );
-        assert_eq!(
-            history.toggle_tab("workspace", "two", ids(&["one", "two"])),
-            Some("one".into())
-        );
-        assert_eq!(
-            history.toggle_tab("workspace", "one", ids(&["one", "two"])),
+            history.previous_pane("tab", "three", ids(&["one", "two", "three"])),
             Some("two".into())
         );
     }
 
     #[test]
-    fn pane_history_is_scoped_to_the_current_tab() {
+    fn repeated_event_replay_keeps_a_single_mru_entry() {
         let mut history = HistoryStore::default();
+        history.observe_pane("tab", "one");
+        history.observe_pane("tab", "two");
+        history.observe_pane("tab", "two");
+
         assert_eq!(
-            history.toggle_pane("tab-one", "one", ids(&["one", "two"])),
-            None
-        );
-        assert_eq!(
-            history.toggle_pane("tab-one", "two", ids(&["one", "two"])),
+            history.previous_pane("tab", "two", ids(&["one", "two"])),
             Some("one".into())
         );
+    }
+
+    #[test]
+    fn tab_history_is_updated_by_focus_observations() {
+        let mut history = HistoryStore::default();
+        history.observe_tab("workspace", "one");
+        history.observe_tab("workspace", "two");
+
         assert_eq!(
-            history.toggle_pane("tab-two", "three", ids(&["three"])),
-            None
+            history.previous_tab("workspace", "two", ids(&["one", "two"])),
+            Some("one".into())
         );
     }
 
     #[test]
     fn closed_objects_are_pruned_before_selecting_a_target() {
         let mut history = HistoryStore::default();
-        history.toggle_tab("workspace", "one", ids(&["one", "two", "three"]));
-        history.toggle_tab("workspace", "two", ids(&["one", "two", "three"]));
-        history.toggle_tab("workspace", "three", ids(&["one", "two", "three"]));
+        history.observe_tab("workspace", "one");
+        history.observe_tab("workspace", "two");
 
-        assert_eq!(history.toggle_tab("workspace", "one", ids(&["one"])), None);
+        assert_eq!(
+            history.previous_tab("workspace", "one", ids(&["one"])),
+            None
+        );
     }
 
     #[test]
-    fn duplicate_observations_do_not_make_the_current_object_its_own_target() {
+    fn pane_history_is_scoped_to_the_current_tab() {
         let mut history = HistoryStore::default();
-        assert_eq!(history.toggle_pane("tab", "one", ids(&["one"])), None);
-        assert_eq!(history.toggle_pane("tab", "one", ids(&["one"])), None);
-    }
+        history.observe_pane("tab-one", "one");
+        history.observe_pane("tab-two", "two");
 
-    #[test]
-    fn histories_do_not_cross_workspace_boundaries() {
-        let mut history = HistoryStore::default();
-        history.toggle_tab("one", "first", ids(&["first", "second"]));
-        assert_eq!(history.toggle_tab("two", "other", ids(&["other"])), None);
+        assert_eq!(history.previous_pane("tab-one", "one", ids(&["one"])), None);
     }
 }
